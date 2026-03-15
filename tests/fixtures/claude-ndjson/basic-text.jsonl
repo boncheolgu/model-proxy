@@ -1,0 +1,4 @@
+{"type":"system","session_id":"s-fixture"}
+{"type":"assistant","text":"Hello"}
+{"type":"assistant","text":" world"}
+{"type":"result","session_id":"s-fixture"}
