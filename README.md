@@ -1,4 +1,4 @@
-# claude-openai-proxy
+# claude-proxy
 
 OpenAI-compatible proxy for `POST /v1/chat/completions` backed by local Claude CLI sessions.
 
