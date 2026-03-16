@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { parseChatRequest } from '../contracts/openai-chat.js';
 import { requireAuthAndTenant, resolveConversationKey, type AuthedRequest } from '../middleware/auth.js';
 import { getContainer } from '../runtime/container.js';
@@ -28,6 +29,31 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
 
   router.post('/', requireAuthAndTenant, async (req, res) => {
     let wantsStream = false;
+    const startedAt = Date.now();
+    const runId = randomUUID();
+    let ended = false;
+    const log = (event: 'request.start' | 'request.end', payload: Record<string, unknown>) => {
+      try {
+        console.log(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            runId,
+            event,
+            ...payload,
+          }),
+        );
+      } catch {
+        return;
+      }
+    };
+    const logEnd = (payload: Record<string, unknown>) => {
+      if (ended) return;
+      ended = true;
+      log('request.end', {
+        elapsedMs: Date.now() - startedAt,
+        ...payload,
+      });
+    };
     try {
       const body = parseChatRequest(req.body);
       wantsStream = Boolean(body.stream);
@@ -43,6 +69,12 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
       const areq = req as AuthedRequest;
       const conversationKey = resolveConversationKey(req, body.model);
       areq.conversationKey = conversationKey;
+      log('request.start', {
+        model: body.model,
+        stream: wantsStream,
+        tenantId: areq.tenant.id,
+        conversationKey,
+      });
       const prompt = getPromptFromMessages(body.messages as Array<{ role: string; content: unknown }>);
 
       if (body.stream) {
@@ -69,6 +101,13 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         });
         if (result.exitCode !== 0) {
           if (!sseStarted) {
+            logEnd({
+              stream: true,
+              isError: true,
+              statusCode: 502,
+              exitCode: result.exitCode,
+              sessionId: result.sessionId,
+            });
             return res.status(502).json({
               error: {
                 message: result.text || 'runner failed',
@@ -77,6 +116,13 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
               },
             });
           }
+          logEnd({
+            stream: true,
+            isError: true,
+            statusCode: 200,
+            exitCode: result.exitCode,
+            sessionId: result.sessionId,
+          });
           res.end();
           return;
         }
@@ -91,6 +137,13 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
             total_tokens: promptTokens + completionTokens,
           },
         });
+        logEnd({
+          stream: true,
+          isError: false,
+          statusCode: 200,
+          exitCode: result.exitCode,
+          sessionId: result.sessionId,
+        });
         return;
       }
 
@@ -102,6 +155,13 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
       });
 
       if (result.exitCode !== 0) {
+        logEnd({
+          stream: false,
+          isError: true,
+          statusCode: 502,
+          exitCode: result.exitCode,
+          sessionId: result.sessionId,
+        });
         return res.status(502).json({
           error: {
             message: result.text || 'runner failed',
@@ -111,6 +171,13 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         });
       }
 
+      logEnd({
+        stream: false,
+        isError: false,
+        statusCode: 200,
+        exitCode: result.exitCode,
+        sessionId: result.sessionId,
+      });
       return res.json(mapNonStreamResult({ text: result.text, model: body.model }));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'unknown error';
@@ -118,11 +185,23 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         if (!res.headersSent) {
           beginSse(res);
         }
+        logEnd({
+          stream: true,
+          isError: true,
+          statusCode: 200,
+          error: msg,
+        });
         res.write('data: [DONE]\n\n');
         res.end();
         return;
       }
       const status = msg.includes('busy') ? 409 : 400;
+      logEnd({
+        stream: false,
+        isError: true,
+        statusCode: status,
+        error: msg,
+      });
       return res.status(status).json({ error: { message: msg, type: 'invalid_request_error', code: 'bad_request' } });
     }
   });

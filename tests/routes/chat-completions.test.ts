@@ -10,6 +10,44 @@ function payload(stream: boolean) {
 }
 
 describe('chat completions route', () => {
+  it('emits structured request start/end logs for non-stream request', async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((msg: string) => {
+      logs.push(String(msg));
+    });
+    const app = createApp({
+      runner: {
+        run: async () => ({ text: 'ok', stderr: '', sessionId: 'sess-1', exitCode: 0 }),
+      },
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer test')
+      .set('x-conversation-key', 'conv-1')
+      .send(payload(false));
+
+    expect(res.status).toBe(200);
+    spy.mockRestore();
+
+    const parsed = logs.map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean) as Array<Record<string, unknown>>;
+
+    const startLog = parsed.find((l) => l.event === 'request.start');
+    const endLog = parsed.find((l) => l.event === 'request.end');
+    expect(startLog).toBeTruthy();
+    expect(endLog).toBeTruthy();
+    expect(startLog?.model).toBe('claude-sonnet-4-6');
+    expect(startLog?.conversationKey).toBe('conv-1');
+    expect(endLog?.exitCode).toBe(0);
+    expect(endLog?.sessionId).toBe('sess-1');
+  });
+
   it('supports stream=false and stream=true', async () => {
     const app = createApp({
       runner: {
