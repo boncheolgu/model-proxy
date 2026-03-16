@@ -1,4 +1,4 @@
-# claude-proxy
+# model-proxy
 
 OpenAI-compatible proxy for `POST /v1/chat/completions` backed by local Claude CLI sessions.
 
@@ -47,7 +47,7 @@ Create or update `opencode.json` in your project root:
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "claude-proxy": {
+    "model-proxy": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Claude Proxy Local",
       "options": {
@@ -69,7 +69,7 @@ In `~/.local/share/opencode/auth.json`, add:
 
 ```json
 {
-  "claude-proxy": {
+  "model-proxy": {
     "type": "api",
     "key": "test"
   }
@@ -81,8 +81,8 @@ If this file already has other providers, merge this object instead of replacing
 ### 4) Verify in OpenCode
 
 ```bash
-opencode models claude-proxy
-opencode run -m claude-proxy/claude-sonnet-4-6 "Reply with exactly: OPENCODE_PROXY_OK"
+opencode models model-proxy
+opencode run -m model-proxy/claude-sonnet-4-6 "Reply with exactly: OPENCODE_PROXY_OK"
 ```
 
 Expected output includes: `OPENCODE_PROXY_OK`

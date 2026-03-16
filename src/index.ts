@@ -4,5 +4,5 @@ const port = Number(process.env.PORT || 8787);
 const app = createApp();
 
 app.listen(port, () => {
-  process.stdout.write(`claude-proxy listening on :${port}\n`);
+  process.stdout.write(`model-proxy listening on :${port}\n`);
 });
