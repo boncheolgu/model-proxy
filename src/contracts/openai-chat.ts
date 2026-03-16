@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const messageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool', 'developer']),
-  content: z.union([z.string(), z.array(z.any())]),
+  content: z.union([z.string(), z.array(z.any())]).nullable(),
 }).passthrough();
 
 export const chatCompletionRequestSchema = z
