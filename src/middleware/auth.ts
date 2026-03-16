@@ -22,8 +22,8 @@ function parseBearerToken(authHeader: string | undefined): string | null {
 export function resolveConversationKey(req: Request, model: string): string {
   const explicit = String(req.header('x-conversation-key') || '').trim();
   if (explicit) return explicit;
-  const fallback = `${req.ip}:${model}`;
-  return crypto.createHash('sha256').update(fallback).digest('hex').slice(0, 24);
+  const seed = `${crypto.randomUUID()}:${req.ip}:${model}:${Date.now()}`;
+  return crypto.createHash('sha256').update(seed).digest('hex').slice(0, 24);
 }
 
 export function requireAuthAndTenant(req: Request, res: Response, next: NextFunction) {

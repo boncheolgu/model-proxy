@@ -31,22 +31,56 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
     try {
       const body = parseChatRequest(req.body);
       wantsStream = Boolean(body.stream);
+      if (body.n != null && body.n !== 1) {
+        return res.status(400).json({
+          error: {
+            message: 'Only n=1 is supported',
+            type: 'invalid_request_error',
+            code: 'unsupported_parameter',
+          },
+        });
+      }
       const areq = req as AuthedRequest;
       const conversationKey = resolveConversationKey(req, body.model);
       areq.conversationKey = conversationKey;
       const prompt = getPromptFromMessages(body.messages as Array<{ role: string; content: unknown }>);
 
       if (body.stream) {
-        beginSse(res);
         const state = createStreamState(body.model);
+        let sseStarted = false;
+        const startSse = () => {
+          if (sseStarted) return;
+          beginSse(res);
+          sseStarted = true;
+        };
         const result = await container.runner.run({
           tenantId: areq.tenant.id,
           conversationKey,
           model: body.model,
           prompt,
-          onDelta: (txt) => writeDelta(res, state, txt),
-          onToolCall: (delta) => writeToolCallDelta(res, state, delta),
+          onDelta: (txt) => {
+            startSse();
+            writeDelta(res, state, txt);
+          },
+          onToolCall: (delta) => {
+            startSse();
+            writeToolCallDelta(res, state, delta);
+          },
         });
+        if (result.exitCode !== 0) {
+          if (!sseStarted) {
+            return res.status(502).json({
+              error: {
+                message: result.text || 'runner failed',
+                type: 'server_error',
+                code: 'runner_failed',
+              },
+            });
+          }
+          res.end();
+          return;
+        }
+        startSse();
         const promptTokens = estimateTokens(prompt);
         const completionTokens = estimateTokens(result.text || '');
         endStream(res, state, {

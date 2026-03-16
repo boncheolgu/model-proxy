@@ -97,4 +97,36 @@ describe('chat completions route', () => {
     expect(usageChunk).toBeTruthy();
     expect(usageChunk.usage.total_tokens).toBeGreaterThan(0);
   });
+
+  it('returns 502 for stream request when runner exits non-zero without chunks', async () => {
+    const app = createApp({
+      runner: {
+        run: async () => ({ text: 'runner failed', stderr: 'boom', sessionId: null, exitCode: 1 }),
+      },
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer test')
+      .send(payload(true));
+
+    expect(res.status).toBe(502);
+    expect(res.body.error.code).toBe('runner_failed');
+  });
+
+  it('rejects n greater than 1', async () => {
+    const app = createApp({
+      runner: {
+        run: async () => ({ text: 'ok', stderr: '', sessionId: 's-1', exitCode: 0 }),
+      },
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer test')
+      .send({ ...payload(false), n: 2 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('unsupported_parameter');
+  });
 });
