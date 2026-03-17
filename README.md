@@ -13,6 +13,37 @@ Allows Claude CLI (Max plan) to be used as a backend for tools like OpenCode and
 - Per-conversation locking (one inflight request per key)
 - Multi-tenant auth via Bearer token
 
+## How It Works
+
+Claude Max plan provides unlimited CLI usage, but the CLI speaks its own protocol (NDJSON over stdio) -- not the OpenAI API format that most developer tools expect. This proxy bridges the gap.
+
+```
+Client (OpenAI format)           model-proxy                    Claude CLI
+
+POST /v1/chat/completions  -->  extract messages
+                                spawn `claude` subprocess  -->  stdin (prompt)
+                                                           <--  stdout (NDJSON events)
+                                parse events, convert
+                           <--  SSE chunks or JSON body
+```
+
+**On each request:**
+
+1. The proxy receives a standard OpenAI chat completion request.
+2. Messages are extracted from the request body and piped to the Claude CLI's stdin.
+3. The CLI runs with `--output-format stream-json`, emitting NDJSON events on stdout -- text deltas, tool calls, and session metadata.
+4. Each NDJSON line is parsed in real time and converted to either OpenAI SSE frames (`data: {...}\n\n`) for streaming or a single JSON response for non-streaming.
+
+**Session continuity across requests:**
+
+The CLI is stateless per invocation, but supports `--resume <session_id>` to continue a prior conversation. The proxy automates this:
+
+- A `conversation_key` (from the `x-conversation-key` header, or auto-generated) is mapped to a `claude_session_id` in SQLite.
+- On the next request with the same key, the CLI is spawned with `--resume`, preserving full conversation context.
+- If the session has expired on Claude's side, the proxy detects the failure, discards the stale pointer, and transparently retries with a fresh session.
+
+This means any tool that speaks the OpenAI API -- OpenCode, OpenClaw, custom scripts -- can use Claude CLI as its backend without knowing the CLI exists.
+
 ## Quick Start
 
 ```bash
