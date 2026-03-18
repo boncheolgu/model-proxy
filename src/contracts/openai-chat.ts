@@ -5,6 +5,27 @@ const messageSchema = z.object({
   content: z.union([z.string(), z.array(z.any())]).nullable(),
 }).passthrough();
 
+const toolSchema = z.object({
+  type: z.literal('function'),
+  function: z.object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+    parameters: z.any().optional(),
+  }).passthrough(),
+}).passthrough();
+
+const toolChoiceSchema = z.union([
+  z.literal('none'),
+  z.literal('auto'),
+  z.literal('required'),
+  z.object({
+    type: z.literal('function'),
+    function: z.object({
+      name: z.string().min(1),
+    }).passthrough(),
+  }).passthrough(),
+]);
+
 export const chatCompletionRequestSchema = z
   .object({
     model: z.string().min(1),
@@ -16,6 +37,8 @@ export const chatCompletionRequestSchema = z
     top_p: z.number().min(0).max(1).optional(),
     stop: z.union([z.string(), z.array(z.string())]).optional(),
     n: z.number().int().positive().optional(),
+    tools: z.array(toolSchema).optional(),
+    tool_choice: toolChoiceSchema.optional(),
     stream_options: z
       .object({
         include_usage: z.boolean().optional(),

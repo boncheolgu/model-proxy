@@ -1,9 +1,9 @@
 import express from 'express';
 import { createChatCompletionsRouter } from './routes/chat-completions.js';
-import type { ClaudeRunner } from './claude/runner.js';
+import type { ModelRunner } from './runners/types.js';
 
 type AppDeps = {
-  runner: Pick<ClaudeRunner, 'run'>;
+  runner: Pick<ModelRunner, 'run'>;
 };
 
 export function createApp(deps?: AppDeps) {

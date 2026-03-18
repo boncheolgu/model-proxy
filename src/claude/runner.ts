@@ -1,38 +1,23 @@
 import { spawn as spawnProcess } from 'node:child_process';
+import fs from 'node:fs';
 import { buildClaudeArgs } from './args.js';
 import { parseClaudeEvent } from './events.js';
 import { acquireConversationLock, releaseConversationLock } from '../runtime/locks.js';
 import { shouldRetryWithoutResume, timeoutMs } from '../runtime/policy.js';
 import { SessionRepo } from '../store/session-repo.js';
-
-export type RunnerInput = {
-  tenantId: string;
-  conversationKey: string;
-  model: string;
-  prompt: string;
-  systemPrompt?: string;
-  effort?: string;
-  permissions?: 'auto' | 'default';
-  onDelta?: (text: string) => void;
-  onToolCall?: (delta: { index: number; id?: string; name?: string; argumentsDelta?: string; isStart?: boolean }) => void;
-};
-
-export type RunnerResult = {
-  text: string;
-  stderr: string;
-  sessionId: string | null;
-  exitCode: number;
-};
+import type { ModelRunner, RunnerInput, RunnerResult } from '../runners/types.js';
+import { canonicalClaudeModel } from '../runners/model-utils.js';
 
 type SpawnFn = typeof spawnProcess;
 
-export class ClaudeRunner {
+export class ClaudeRunner implements ModelRunner {
   constructor(
     private readonly repo: SessionRepo,
     private readonly spawnFn: SpawnFn = spawnProcess,
   ) {}
 
   async run(input: RunnerInput): Promise<RunnerResult> {
+    const model = canonicalClaudeModel(input.model);
     const lockKey = `${input.tenantId}:${input.conversationKey}`;
     if (!acquireConversationLock(lockKey)) {
       throw new Error('conversation is busy');
@@ -40,14 +25,14 @@ export class ClaudeRunner {
 
     try {
       const existing = this.repo.get(input.tenantId, input.conversationKey);
-      const resumeId = existing && existing.model === input.model ? existing.claudeSessionId : null;
-      const firstAttempt = await this.runOnce(input, resumeId);
+      const resumeId = existing && existing.model === model ? existing.claudeSessionId : null;
+      const firstAttempt = await this.runOnce({ ...input, model }, resumeId);
       if (firstAttempt.exitCode === 0) return firstAttempt;
 
       const canRetry = Boolean(resumeId) && shouldRetryWithoutResume(firstAttempt.stderr).retryAsNewSession;
       if (canRetry) {
         this.repo.invalidate(input.tenantId, input.conversationKey);
-        return this.runOnce(input, null);
+        return this.runOnce({ ...input, model }, null);
       }
 
       return firstAttempt;
@@ -58,17 +43,26 @@ export class ClaudeRunner {
 
   private runOnce(input: RunnerInput, sessionId: string | null): Promise<RunnerResult> {
     return new Promise((resolve, reject) => {
+      const configuredWorkdir = process.env.CLAUDE_PROXY_WORKDIR || process.cwd();
+      const workdir = fs.existsSync(configuredWorkdir) && fs.statSync(configuredWorkdir).isDirectory()
+        ? configuredWorkdir
+        : process.cwd();
+      if (configuredWorkdir !== workdir) {
+        console.warn(`Invalid CLAUDE_PROXY_WORKDIR: ${configuredWorkdir}. Falling back to ${workdir}`);
+      }
       const args = buildClaudeArgs({
         model: input.model,
         effort: input.effort,
         sessionId,
         permissions: input.permissions,
         systemPrompt: input.systemPrompt,
+        workdir,
       });
 
       const child = this.spawnFn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: process.env,
+        cwd: workdir,
       });
 
       let fullText = '';

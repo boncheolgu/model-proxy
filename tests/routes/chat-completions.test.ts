@@ -10,6 +10,71 @@ function payload(stream: boolean) {
 }
 
 describe('chat completions route', () => {
+  it('injects tool bridge system prompt for claude models', async () => {
+    let captured: any = null;
+    const app = createApp({
+      runner: {
+        run: async (input: any) => {
+          captured = input;
+          return { text: 'ok', stderr: '', sessionId: 's-tool', exitCode: 0 };
+        },
+      },
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer test')
+      .send({
+        model: 'claude-sonnet-4-6',
+        stream: false,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'search_web',
+              description: 'Search the web',
+              parameters: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },
+            },
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(captured.systemPrompt).toContain('Tool Bridge Context');
+    expect(captured.systemPrompt).toContain('search_web');
+  });
+
+  it('does not inject tool bridge for non-claude models', async () => {
+    let captured: any = null;
+    const app = createApp({
+      runner: {
+        run: async (input: any) => {
+          captured = input;
+          return { text: 'ok', stderr: '', sessionId: null, exitCode: 0 };
+        },
+      },
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer test')
+      .send({
+        model: 'gpt-4o-mini',
+        stream: false,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'search_web', parameters: { type: 'object' } },
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(captured.systemPrompt).toBeUndefined();
+  });
+
   it('emits structured request start/end logs for non-stream request', async () => {
     const logs: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((msg: string) => {
