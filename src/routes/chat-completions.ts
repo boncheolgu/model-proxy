@@ -5,17 +5,40 @@ import { requireAuthAndTenant, resolveConversationKey, type AuthedRequest } from
 import { getContainer } from '../runtime/container.js';
 import { mapNonStreamResult } from '../adapters/openai-nonstream.js';
 import { beginSse, createStreamState, endStream, writeDelta, writeToolCallDelta } from '../adapters/openai-stream.js';
-import type { ClaudeRunner } from '../claude/runner.js';
+import type { ModelRunner } from '../runners/types.js';
+import { isClaudeModel } from '../runners/model-utils.js';
+import type { ChatCompletionRequest } from '../contracts/openai-chat.js';
 
 type RouteContainer = {
-  runner: Pick<ClaudeRunner, 'run'>;
+  runner: Pick<ModelRunner, 'run'>;
 };
 
 function getPromptFromMessages(messages: Array<{ role: string; content: unknown }>): string {
   return messages
-    .filter((m) => m.role === 'user' || m.role === 'system' || m.role === 'developer')
-    .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+    .filter((m) => ['user', 'system', 'developer', 'assistant', 'tool'].includes(m.role))
+    .map((m) => {
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      return `[${m.role}]\n${content}`;
+    })
     .join('\n\n');
+}
+
+function buildToolBridgeSystemPrompt(body: ChatCompletionRequest): string | undefined {
+  if (!body.tools || body.tools.length === 0) return undefined;
+  const toolLines = body.tools.map((tool) => {
+    const fn = tool.function;
+    const params = fn.parameters ? JSON.stringify(fn.parameters) : '{}';
+    const description = fn.description ?? '';
+    return `- ${fn.name}: ${description}\n  parameters: ${params}`;
+  });
+  const toolChoice = body.tool_choice ? JSON.stringify(body.tool_choice) : 'auto';
+  return [
+    'Tool Bridge Context (OpenCode -> Claude CLI)',
+    'The client provided the following tool definitions for this session:',
+    ...toolLines,
+    `tool_choice: ${toolChoice}`,
+    'If tool usage is needed, prefer tools from this list and align arguments with the provided JSON schema.',
+  ].join('\n');
 }
 
 function estimateTokens(text: string): number {
@@ -76,6 +99,7 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         conversationKey,
       });
       const prompt = getPromptFromMessages(body.messages as Array<{ role: string; content: unknown }>);
+      const bridgeSystemPrompt = isClaudeModel(body.model) ? buildToolBridgeSystemPrompt(body) : undefined;
 
       if (body.stream) {
         const state = createStreamState(body.model);
@@ -90,6 +114,8 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
           conversationKey,
           model: body.model,
           prompt,
+          request: body,
+          systemPrompt: bridgeSystemPrompt,
           onDelta: (txt) => {
             startSse();
             writeDelta(res, state, txt);
@@ -152,6 +178,8 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         conversationKey,
         model: body.model,
         prompt,
+        request: body,
+        systemPrompt: bridgeSystemPrompt,
       });
 
       if (result.exitCode !== 0) {

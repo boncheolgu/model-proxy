@@ -107,6 +107,26 @@ POST /v1/chat/completions
 - Dev fallback key: `test`
 - Multi-tenant key map: `PROXY_API_KEYS="tenantA:keyA,tenantB:keyB"`
 
+## Runtime Configuration
+
+- `CLAUDE_PROXY_WORKDIR`: working directory used when spawning `claude` (default: proxy process cwd).
+- `CLAUDE_PROXY_MCP_CONFIG`: optional path passed as `claude --mcp-config <path>` (relative paths resolve from `CLAUDE_PROXY_WORKDIR`).
+- `CLAUDE_PROXY_STRICT_MCP_CONFIG`: when truthy (`1|true|yes|on`) and MCP config is set, adds `--strict-mcp-config`.
+- `MODEL_PROXY_UPSTREAM_BASE_URL`: optional OpenAI-compatible upstream base URL used for non-Claude models (example: `https://api.openai.com/v1`).
+- `MODEL_PROXY_UPSTREAM_API_KEY`: optional API key for the upstream provider.
+
+### Model Routing
+
+- `claude-*` and `anthropic/claude-*` models run through local Claude CLI (session resume + local MCP support).
+- Other model names run through `MODEL_PROXY_UPSTREAM_BASE_URL` when configured.
+- If a non-Claude model is requested without upstream configuration, the proxy returns an error.
+
+### OpenCode Tool Bridge (Claude Path)
+
+- When `tools`/`tool_choice` are present in a Claude-model request, model-proxy injects a tool summary into the session system prompt on creation.
+- This mirrors session-level tool context injection used by OpenClaw-style integrations.
+- MCP execution still depends on Claude CLI MCP configuration (`CLAUDE_PROXY_WORKDIR`/`CLAUDE_PROXY_MCP_CONFIG`).
+
 ## API
 
 `POST /v1/chat/completions`
@@ -165,6 +185,24 @@ Verify:
 opencode models model-proxy
 opencode run -m model-proxy/claude-sonnet-4-6 "Reply with exactly: OPENCODE_PROXY_OK"
 ```
+
+To mix Claude and non-Claude models in OpenCode with one proxy, keep Claude models in provider config and add upstream model IDs (for example `gpt-4o-mini`). Then run model-proxy with upstream env vars:
+
+```bash
+MODEL_PROXY_UPSTREAM_BASE_URL="https://api.openai.com/v1" \
+MODEL_PROXY_UPSTREAM_API_KEY="<your-key>" \
+npx tsx src/index.ts
+```
+
+If MCP tools are not discovered through the proxy, start model-proxy with the same workspace and MCP config that Claude should use:
+
+```bash
+CLAUDE_PROXY_WORKDIR="/absolute/path/to/your/project" \
+CLAUDE_PROXY_MCP_CONFIG="/absolute/path/to/your/mcp.json" \
+npx tsx src/index.ts
+```
+
+`CLAUDE_PROXY_WORKDIR` is important because `claude` reads project-local settings from its working directory.
 
 ### OpenClaw
 
