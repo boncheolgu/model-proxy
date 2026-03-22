@@ -15,7 +15,7 @@ Allows Claude CLI (Max plan) to be used as a backend for tools like OpenCode and
 
 ## How It Works
 
-Claude Max plan provides unlimited CLI usage, but the CLI speaks its own protocol (NDJSON over stdio) -- not the OpenAI API format that most developer tools expect. This proxy bridges the gap.
+Claude CLI speaks its own protocol (NDJSON over stdio) rather than the OpenAI API format that most developer tools expect. Available usage and rate limits depend on your Claude account and plan. This proxy bridges the gap.
 
 ```
 Client (OpenAI format)           model-proxy                    Claude CLI
@@ -106,6 +106,12 @@ POST /v1/chat/completions
 - Header: `Authorization: Bearer <key>`
 - Dev fallback key: `test`
 - Multi-tenant key map: `PROXY_API_KEYS="tenantA:keyA,tenantB:keyB"`
+
+### Claude CLI authentication
+
+`model-proxy` does not perform interactive Claude login for you. Make sure Claude CLI is already logged in in the environment where the proxy runs.
+
+If Claude CLI is not authenticated, requests will fail with a login-related runner error.
 
 ## Runtime Configuration
 
@@ -206,50 +212,37 @@ npx tsx src/index.ts
 
 ### OpenClaw
 
-Add the provider to `~/.openclaw/agents/main/agent/models.json`:
+Configure the provider in `~/.openclaw/openclaw.json`:
 
-```json
+```json5
 {
-  "providers": {
-    "model-proxy": {
-      "baseUrl": "http://127.0.0.1:8787/v1",
-      "apiKey": "test",
-      "api": "openai-completions",
-      "models": [
-        { "id": "claude-opus-4-6",   "name": "Claude Opus 4.6 (Proxy)",   "contextWindow": 200000, "maxTokens": 8192 },
-        { "id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6 (Proxy)", "contextWindow": 200000, "maxTokens": 8192 },
-        { "id": "claude-haiku-4-5",  "name": "Claude Haiku 4.5 (Proxy)",  "contextWindow": 200000, "maxTokens": 8192 }
-      ]
+  models: {
+    providers: {
+      "model-proxy": {
+        baseUrl: "http://127.0.0.1:8787/v1",
+        apiKey: "test",
+        api: "openai-completions",
+        models: [
+          { id: "claude-opus-4-6",   name: "Claude Opus 4.6 (Proxy)",   contextWindow: 200000, maxTokens: 8192 },
+          { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Proxy)", contextWindow: 200000, maxTokens: 8192 },
+          { id: "claude-haiku-4-5",  name: "Claude Haiku 4.5 (Proxy)",  contextWindow: 200000, maxTokens: 8192 }
+        ]
+      }
     }
   }
 }
 ```
 
-Register models in `~/.openclaw/openclaw.json`:
+Register the models in the same `openclaw.json` so they appear in OpenClaw model selection flows:
 
 ```json5
 {
   agents: {
     defaults: {
       models: {
-        "model-proxy/claude-opus-4-6":   { alias: "Opus (Proxy)" },
-        "model-proxy/claude-sonnet-4-6": { alias: "Sonnet (Proxy)" },
-        "model-proxy/claude-haiku-4-5":  { alias: "Haiku (Proxy)" },
-      },
-    },
-  },
-}
-```
-
-To expose models in channel `/models` commands, add an auth profile:
-
-```json5
-{
-  auth: {
-    profiles: {
-      "model-proxy:default": {
-        provider: "model-proxy",
-        mode: "api_key",
+        "model-proxy/claude-opus-4-6": {},
+        "model-proxy/claude-sonnet-4-6": {},
+        "model-proxy/claude-haiku-4-5": {},
       },
     },
   },
@@ -261,6 +254,8 @@ Verify:
 ```bash
 openclaw models list --provider model-proxy
 ```
+
+Then test an actual request with a `model-proxy/...` model.
 
 Adding a new provider may require a gateway restart.
 
