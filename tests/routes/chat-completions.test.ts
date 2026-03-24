@@ -10,7 +10,7 @@ function payload(stream: boolean) {
 }
 
 describe('chat completions route', () => {
-  it('injects tool bridge system prompt for claude models', async () => {
+  it('ignores tools and tool_choice for claude models', async () => {
     let captured: any = null;
     const app = createApp({
       runner: {
@@ -38,14 +38,55 @@ describe('chat completions route', () => {
             },
           },
         ],
+        tool_choice: 'required',
       });
 
     expect(res.status).toBe(200);
-    expect(captured.systemPrompt).toContain('Tool Bridge Context');
-    expect(captured.systemPrompt).toContain('search_web');
+    expect(captured.request.tools).toBeUndefined();
+    expect(captured.request.tool_choice).toBeUndefined();
   });
 
-  it('does not inject tool bridge for non-claude models', async () => {
+  it('emits policy log when tools are ignored on claude path', async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((msg: string) => {
+      logs.push(String(msg));
+    });
+    const app = createApp({
+      runner: {
+        run: async () => ({ text: 'ok', stderr: '', sessionId: 's-tool', exitCode: 0 }),
+      },
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer test')
+      .send({
+        model: 'claude-sonnet-4-6',
+        stream: false,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ type: 'function', function: { name: 'search_web', parameters: { type: 'object' } } }],
+        tool_choice: 'auto',
+      });
+
+    expect(res.status).toBe(200);
+    spy.mockRestore();
+
+    const parsed = logs.map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean) as Array<Record<string, unknown>>;
+
+    const policyLog = parsed.find((l) => l.event === 'request.policy');
+    expect(policyLog).toBeTruthy();
+    expect(policyLog?.policy).toBe('ignore_openai_tools_on_claude_path');
+    expect(policyLog?.ignoredToolCount).toBe(1);
+    expect(policyLog?.ignoredToolChoice).toBe(true);
+  });
+
+  it('allows tools for non-claude models', async () => {
     let captured: any = null;
     const app = createApp({
       runner: {
@@ -72,7 +113,7 @@ describe('chat completions route', () => {
       });
 
     expect(res.status).toBe(200);
-    expect(captured.systemPrompt).toBeUndefined();
+    expect(captured.request.tools[0].function.name).toBe('search_web');
   });
 
   it('emits structured request start/end logs for non-stream request', async () => {

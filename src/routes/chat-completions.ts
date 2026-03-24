@@ -7,7 +7,6 @@ import { mapNonStreamResult } from '../adapters/openai-nonstream.js';
 import { beginSse, createStreamState, endStream, writeDelta, writeToolCallDelta } from '../adapters/openai-stream.js';
 import type { ModelRunner } from '../runners/types.js';
 import { isClaudeModel } from '../runners/model-utils.js';
-import type { ChatCompletionRequest } from '../contracts/openai-chat.js';
 
 type RouteContainer = {
   runner: Pick<ModelRunner, 'run'>;
@@ -21,24 +20,6 @@ function getPromptFromMessages(messages: Array<{ role: string; content: unknown 
       return `[${m.role}]\n${content}`;
     })
     .join('\n\n');
-}
-
-function buildToolBridgeSystemPrompt(body: ChatCompletionRequest): string | undefined {
-  if (!body.tools || body.tools.length === 0) return undefined;
-  const toolLines = body.tools.map((tool) => {
-    const fn = tool.function;
-    const params = fn.parameters ? JSON.stringify(fn.parameters) : '{}';
-    const description = fn.description ?? '';
-    return `- ${fn.name}: ${description}\n  parameters: ${params}`;
-  });
-  const toolChoice = body.tool_choice ? JSON.stringify(body.tool_choice) : 'auto';
-  return [
-    'Tool Bridge Context (OpenCode -> Claude CLI)',
-    'The client provided the following tool definitions for this session:',
-    ...toolLines,
-    `tool_choice: ${toolChoice}`,
-    'If tool usage is needed, prefer tools from this list and align arguments with the provided JSON schema.',
-  ].join('\n');
 }
 
 function estimateTokens(text: string): number {
@@ -55,7 +36,7 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
     const startedAt = Date.now();
     const runId = randomUUID();
     let ended = false;
-    const log = (event: 'request.start' | 'request.end', payload: Record<string, unknown>) => {
+    const log = (event: 'request.start' | 'request.end' | 'request.policy', payload: Record<string, unknown>) => {
       try {
         console.log(
           JSON.stringify({
@@ -89,6 +70,12 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
           },
         });
       }
+      const ignoredToolCount = body.tools?.length ?? 0;
+      const ignoredToolChoice = body.tool_choice != null;
+      const shouldIgnoreOpenAITools = isClaudeModel(body.model) && (ignoredToolCount > 0 || ignoredToolChoice);
+      const requestForRunner = shouldIgnoreOpenAITools
+        ? { ...body, tools: undefined, tool_choice: undefined }
+        : body;
       const areq = req as AuthedRequest;
       const conversationKey = resolveConversationKey(req, body.model);
       areq.conversationKey = conversationKey;
@@ -98,8 +85,16 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         tenantId: areq.tenant.id,
         conversationKey,
       });
+      if (shouldIgnoreOpenAITools) {
+        log('request.policy', {
+          policy: 'ignore_openai_tools_on_claude_path',
+          model: body.model,
+          ignoredToolCount,
+          ignoredToolChoice,
+          conversationKey,
+        });
+      }
       const prompt = getPromptFromMessages(body.messages as Array<{ role: string; content: unknown }>);
-      const bridgeSystemPrompt = isClaudeModel(body.model) ? buildToolBridgeSystemPrompt(body) : undefined;
 
       if (body.stream) {
         const state = createStreamState(body.model);
@@ -114,8 +109,7 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
           conversationKey,
           model: body.model,
           prompt,
-          request: body,
-          systemPrompt: bridgeSystemPrompt,
+          request: requestForRunner,
           onDelta: (txt) => {
             startSse();
             writeDelta(res, state, txt);
@@ -178,8 +172,7 @@ export function createChatCompletionsRouter(override?: RouteContainer) {
         conversationKey,
         model: body.model,
         prompt,
-        request: body,
-        systemPrompt: bridgeSystemPrompt,
+        request: requestForRunner,
       });
 
       if (result.exitCode !== 0) {
