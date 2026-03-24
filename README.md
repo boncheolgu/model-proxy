@@ -121,11 +121,11 @@ POST /v1/chat/completions
 - Other model names run through `MODEL_PROXY_UPSTREAM_BASE_URL` when configured.
 - If a non-Claude model is requested without upstream configuration, the proxy returns an error.
 
-### OpenCode Tool Bridge (Claude Path)
+### Claude Path Tool Policy
 
-- When `tools`/`tool_choice` are present in a Claude-model request, model-proxy injects a tool summary into the session system prompt on creation.
-- This mirrors session-level tool context injection used by OpenClaw-style integrations.
-- MCP execution still depends on Claude CLI MCP configuration (`CLAUDE_PROXY_WORKDIR`/`CLAUDE_PROXY_MCP_CONFIG`).
+- For Claude models (`claude-*`, `anthropic/claude-*`), OpenAI `tools`/`tool_choice` request fields are ignored by model-proxy.
+- Use Claude CLI-native tools (MCP/CLI environment) on the Claude path by configuring `CLAUDE_PROXY_WORKDIR` and `CLAUDE_PROXY_MCP_CONFIG`.
+- If you need OpenAI tool orchestration (`tools` + tool result loop), use a non-Claude model routed through `MODEL_PROXY_UPSTREAM_BASE_URL`.
 
 ## API
 
